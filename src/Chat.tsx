@@ -164,7 +164,7 @@ const ChatApp: React.FC = () => {
                             onError={(e) => {
                                 // If image fails to load, show as regular link instead
                                 const target = e.target as HTMLImageElement;
-                                const parent = target.parentNode;
+                                const parent = target.parentNode as HTMLElement;
                                 if (parent) {
                                     parent.innerHTML = `<a href="${url}" target="_blank" rel="noopener noreferrer" class="text-cyan-400 hover:text-cyan-300 underline inline-flex items-center space-x-1 transition-colors duration-200">
                                         <span>${url}</span>
