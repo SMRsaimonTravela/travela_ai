@@ -1,5 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Bot, User, Loader2, ExternalLink, X, ZoomIn } from 'lucide-react';
+import { Send, Bot, User, Loader2, X,} from 'lucide-react';
+import ChatResponseView from "./ChatResponseView.tsx";
+
 
 interface Message {
     id: number;
@@ -24,11 +26,7 @@ const ChatApp: React.FC = () => {
     // N8N webhook URL
     const N8N_WEBHOOK_URL: string = 'https://n8n.moveon.run/webhook/chat';
 
-    // URL regex pattern
-    const urlRegex = /(https?:\/\/[^\s]+)/g;
 
-    // Image URL regex pattern
-    const imageRegex = /\.(jpg|jpeg|png|gif|webp|svg|bmp|ico)(\?[^\s]*)?$/i;
 
     // Load messages from local storage on component mount
     useEffect(() => {
@@ -67,10 +65,7 @@ const ChatApp: React.FC = () => {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     };
 
-    const openImageModal = (src: string): void => {
-        setModalImageSrc(src);
-        setImageModalOpen(true);
-    };
+
 
     const closeImageModal = (): void => {
         setImageModalOpen(false);
@@ -137,168 +132,15 @@ const ChatApp: React.FC = () => {
         }
     };
 
-    const renderTextWithLinks = (text: string): React.ReactNode => {
-        const urls = text.match(urlRegex);
-        if (!urls) return text;
 
-        let result: React.ReactNode[] = [];
-        let lastIndex = 0;
-
-        urls.forEach((url, index) => {
-            const urlIndex = text.indexOf(url, lastIndex);
-
-            // Add text before URL
-            if (urlIndex > lastIndex) {
-                result.push(text.substring(lastIndex, urlIndex));
-            }
-
-            // Check if URL is an image
-            if (imageRegex.test(url)) {
-                result.push(
-                    <div key={`img-${index}`} className="my-2">
-                        <img
-                            src={url}
-                            alt="Shared image"
-                            className="max-w-full h-auto rounded-lg border border-gray-600 cursor-pointer hover:border-cyan-500 transition-colors duration-200 shadow-lg max-h-64 object-contain"
-                            onClick={() => openImageModal(url)}
-                            onError={(e) => {
-                                // If image fails to load, show as regular link instead
-                                const target = e.target as HTMLImageElement;
-                                const parent = target.parentNode as HTMLElement;
-                                if (parent) {
-                                    parent.innerHTML = `<a href="${url}" target="_blank" rel="noopener noreferrer" class="text-cyan-400 hover:text-cyan-300 underline inline-flex items-center space-x-1 transition-colors duration-200">
-                                        <span>${url}</span>
-                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path>
-                                        </svg>
-                                    </a>`;
-                                }
-                            }}
-                        />
-                        <div className="flex items-center space-x-1 text-xs text-gray-400 mt-1">
-                            <ZoomIn className="w-3 h-3" />
-                            <span>Click to view full size</span>
-                        </div>
-                    </div>
-                );
-            } else {
-                // Regular link
-                result.push(
-                    <a
-                        key={`link-${index}`}
-                        href={url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-cyan-400 hover:text-cyan-300 underline inline-flex items-center space-x-1 transition-colors duration-200"
-                    >
-                        <span>{url}</span>
-                        <ExternalLink className="w-3 h-3 flex-shrink-0" />
-                    </a>
-                );
-            }
-
-            lastIndex = urlIndex + url.length;
-        });
-
-        // Add remaining text
-        if (lastIndex < text.length) {
-            result.push(text.substring(lastIndex));
-        }
-
-        return result;
-    };
-
-    const formatMessage = (text: string): React.ReactNode[] => {
-        const lines: string[] = text.split('\n');
-
-        return lines.map((line: string, index: number) => {
-            // Handle table rows
-            if (line.includes('|')) {
-                const cells: string[] = line.split('|').filter(cell => cell.trim() !== '');
-
-                // Check if it's a header row (contains dashes)
-                if (line.includes('---')) {
-                    return (
-                        <div key={index} className="border-b border-gray-600 my-3"></div>
-                    );
-                }
-
-                // Regular table row
-                if (cells.length > 1) {
-                    return (
-                        <div key={index} className="grid grid-cols-2 gap-4 py-2 border-b border-gray-700/50">
-                            {cells.map((cell: string, cellIndex: number) => (
-                                <div
-                                    key={cellIndex}
-                                    className={`${cellIndex === 0 ? 'font-medium text-blue-300' : 'text-gray-200'}`}
-                                >
-                                    {renderTextWithLinks(cell.trim().replace(/\*\*(.*?)\*\*/g, '$1'))}
-                                </div>
-                            ))}
-                        </div>
-                    );
-                }
-            }
-
-            // First, process the entire line for URLs before handling markdown
-            const processedLine = renderTextWithLinks(line);
-
-            // If the line contains bold markdown and no images were rendered, handle bold formatting
-            if (line.includes('**') && typeof processedLine === 'string') {
-                const parts: string[] = line.split(/(\*\*.*?\*\*)/);
-                return (
-                    <div key={index} className="py-1">
-                        {parts.map((part: string, partIndex: number) => {
-                            if (part.startsWith('**') && part.endsWith('**')) {
-                                return (
-                                    <span key={partIndex} className="font-semibold text-blue-300">
-                                        {renderTextWithLinks(part.slice(2, -2))}
-                                    </span>
-                                );
-                            }
-                            return <span key={partIndex}>{renderTextWithLinks(part)}</span>;
-                        })}
-                    </div>
-                );
-            }
-
-            // If URLs/images were processed, return the processed result
-            if (processedLine !== line) {
-                return (
-                    <div key={index} className="py-1">
-                        {processedLine}
-                    </div>
-                );
-            }
-
-            // Handle italic text
-            if (line.startsWith('*') && line.endsWith('*') && !line.startsWith('**')) {
-                return (
-                    <div key={index} className="py-1 text-gray-400 italic text-sm">
-                        {renderTextWithLinks(line.slice(1, -1))}
-                    </div>
-                );
-            }
-
-            // Handle empty lines
-            if (line.trim() === '') {
-                return <div key={index} className="py-1"></div>;
-            }
-
-            // Regular text
-            return (
-                <div key={index} className="py-1">
-                    {processedLine}
-                </div>
-            );
-        });
-    };
 
     const handleTextareaInput = (e: React.FormEvent<HTMLTextAreaElement>): void => {
         const target = e.target as HTMLTextAreaElement;
         target.style.height = 'auto';
         target.style.height = Math.min(target.scrollHeight, 120) + 'px';
     };
+
+    console.log(messages,"messages")
 
     return (
         <div className="flex flex-col h-[90vh] bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 relative overflow-hidden">
@@ -374,7 +216,8 @@ const ChatApp: React.FC = () => {
                                     <div className={`leading-relaxed ${
                                         message.sender === 'user' ? 'text-sm' : 'text-sm'
                                     }`}>
-                                        {formatMessage(message.text)}
+                                   <ChatResponseView sender={message.sender} text={message.text}/>
+                                        {/*{formatMessage(message.text)}*/}
                                     </div>
                                     <div
                                         className={`text-xs mt-2 ${
