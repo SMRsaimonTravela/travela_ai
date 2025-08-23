@@ -1,7 +1,10 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { Send, Bot, User, Loader2, X,} from 'lucide-react';
-import ChatResponseView from "./ChatResponseView.tsx";
-
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { Send, Bot, User, Loader2, X, Copy, Check } from 'lucide-react';
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import rehypeRaw from "rehype-raw";
+import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
+import { materialOceanic } from "react-syntax-highlighter/dist/esm/styles/prism";
 
 interface Message {
     id: number;
@@ -14,6 +17,112 @@ interface ApiResponse {
     output?: string;
 }
 
+// Memoized ChatResponseView component to prevent unnecessary re-renders
+const ChatResponseView: React.FC<{
+    text: string;
+    sender: "bot" | 'user';
+}> = React.memo(({ text, sender }) => {
+    const [copied, setCopied] = useState(false);
+    const timeoutRef = useRef<any>(null);
+
+    const handleCopy = useCallback(async () => {
+        try {
+            await navigator.clipboard.writeText(text);
+            setCopied(true);
+
+            // Clear existing timeout
+            if (timeoutRef.current) {
+                clearTimeout(timeoutRef.current);
+            }
+
+            // Set new timeout
+            timeoutRef.current = setTimeout(() => setCopied(false), 2000);
+        } catch (err) {
+            console.error("Failed to copy text: ", err);
+        }
+    }, [text]);
+
+    // Cleanup timeout on unmount
+    useEffect(() => {
+        return () => {
+            if (timeoutRef.current) {
+                clearTimeout(timeoutRef.current);
+            }
+        };
+    }, []);
+
+    // Memoize the formatted text to prevent recalculation
+    const formattedText = useMemo(() => {
+        return text.replace(
+            /(https?:\/\/[^\s]+(\.png|\.jpg|\.jpeg|\.gif))/gi,
+            "![]($1)"
+        );
+    }, [text]);
+
+    // Memoize markdown components to prevent recreation
+    const markdownComponents = useMemo(() => ({
+        img({ src, alt }: { src?: string; alt?: string }) {
+            return (
+                <img
+                    src={src || ""}
+                    alt={alt || "image"}
+                    className="max-w-full rounded-lg my-2 border border-gray-300 shadow-sm cursor-pointer hover:opacity-90"
+                    loading="lazy"
+                    onClick={() => window.open(src, "_blank")}
+                />
+            );
+        },
+        code({ inline, className, children, ...props }: any) {
+            const match = /language-(\w+)/.exec(className || "");
+            return !inline && match ? (
+                <SyntaxHighlighter
+                    style={materialOceanic as { [key: string]: React.CSSProperties }}
+                    language={match[1]}
+                    PreTag="div"
+                    {...props}
+                >
+                    {String(children).replace(/\n$/, "")}
+                </SyntaxHighlighter>
+            ) : (
+                <code className="bg-gray-200 dark:bg-gray-700 px-1 rounded" {...props}>
+                    {children}
+                </code>
+            );
+        },
+    }), []);
+
+    return (
+        <div className="relative">
+            {/* Copy Button - Only for bot messages */}
+            {sender === "bot" && (
+                <button
+                    onClick={handleCopy}
+                    className="absolute bottom-[-39px] right-0 p-1 rounded-md hover:bg-gray-200 dark:hover:bg-gray-700 transition bg-transparent"
+                    title="Copy message"
+                >
+                    {copied ? (
+                        <Check size={16} className="text-green-500" />
+                    ) : (
+                        <Copy size={16} className="text-gray-500" />
+                    )}
+                </button>
+            )}
+
+            {/* Render Message */}
+            <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                rehypePlugins={[rehypeRaw]}
+                components={markdownComponents}
+            >
+                {formattedText}
+            </ReactMarkdown>
+        </div>
+    );
+});
+
+ChatResponseView.displayName = 'ChatResponseView';
+
+// Main ChatApp Component
 const ChatApp: React.FC = () => {
     const [messages, setMessages] = useState<Message[]>([]);
     const [inputMessage, setInputMessage] = useState<string>('');
@@ -26,14 +135,11 @@ const ChatApp: React.FC = () => {
     // N8N webhook URL
     const N8N_WEBHOOK_URL: string = 'https://n8n.moveon.run/webhook/chat';
 
-
-
     // Load messages from local storage on component mount
     useEffect(() => {
         try {
             const storedMessages = localStorage.getItem('chatHistory');
             if (storedMessages) {
-                // Parse dates correctly
                 const parsedMessages: Message[] = JSON.parse(storedMessages).map((msg: any) => ({
                     ...msg,
                     timestamp: new Date(msg.timestamp)
@@ -42,37 +148,33 @@ const ChatApp: React.FC = () => {
             }
         } catch (error) {
             console.error("Failed to load chat history from local storage:", error);
-            // Optionally clear corrupted data
             localStorage.removeItem('chatHistory');
         }
     }, []);
 
     // Save messages to local storage whenever messages state changes
     useEffect(() => {
-        if (messages.length > 0) { // Only save if there are messages
+        if (messages.length > 0) {
             try {
-                // Keep only the last 100 messages
                 const messagesToSave = messages.slice(Math.max(messages.length - 100, 0));
                 localStorage.setItem('chatHistory', JSON.stringify(messagesToSave));
             } catch (error) {
                 console.error("Failed to save chat history to local storage:", error);
             }
         }
-        scrollToBottom(); // Keep scroll to bottom logic here
+        scrollToBottom();
     }, [messages]);
 
-    const scrollToBottom = (): void => {
+    const scrollToBottom = useCallback((): void => {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-    };
+    }, []);
 
-
-
-    const closeImageModal = (): void => {
+    const closeImageModal = useCallback((): void => {
         setImageModalOpen(false);
         setModalImageSrc('');
-    };
+    }, []);
 
-    const sendMessage = async (): Promise<void> => {
+    const sendMessage = useCallback(async (): Promise<void> => {
         if (!inputMessage.trim() || isLoading) return;
 
         const userMessage: Message = {
@@ -123,24 +225,81 @@ const ChatApp: React.FC = () => {
         } finally {
             setIsLoading(false);
         }
-    };
+    }, [inputMessage, isLoading, N8N_WEBHOOK_URL]);
 
-    const handleKeyPress = (e: React.KeyboardEvent<HTMLTextAreaElement>): void => {
+    const handleKeyPress = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>): void => {
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
             sendMessage();
         }
-    };
+    }, [sendMessage]);
 
-
-
-    const handleTextareaInput = (e: React.FormEvent<HTMLTextAreaElement>): void => {
+    const handleTextareaInput = useCallback((e: React.FormEvent<HTMLTextAreaElement>): void => {
         const target = e.target as HTMLTextAreaElement;
         target.style.height = 'auto';
         target.style.height = Math.min(target.scrollHeight, 120) + 'px';
-    };
+    }, []);
 
-    console.log(messages,"messages")
+    const handleInputChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
+        setInputMessage(e.target.value);
+    }, []);
+
+    // Memoized message components to prevent unnecessary re-renders
+    const messageComponents = useMemo(() => (
+        messages.map((message: Message) => (
+            <div
+                key={message.id}
+                className={`flex ${message.sender === 'user' ? 'justify-end' : 'justify-start'}`}
+            >
+                <div
+                    className={`flex max-w-3xl ${
+                        message.sender === 'user' ? 'flex-row-reverse' : 'flex-row'
+                    } space-x-3`}
+                >
+                    <div className="flex-shrink-0">
+                        <div
+                            className={`p-2 rounded-full shadow-lg ${
+                                message.sender === 'user'
+                                    ? 'bg-gradient-to-r from-blue-500 to-cyan-500'
+                                    : 'bg-gradient-to-r from-gray-600 to-gray-700'
+                            }`}
+                        >
+                            {message.sender === 'user' ? (
+                                <User className="w-5 h-5 text-white" />
+                            ) : (
+                                <Bot className="w-5 h-5 text-white" />
+                            )}
+                        </div>
+                    </div>
+                    <div
+                        className={`px-4 py-3 rounded-2xl shadow-2xl backdrop-blur-sm max-w-full ${
+                            message.sender === 'user'
+                                ? 'bg-gradient-to-r from-blue-600 to-cyan-600 text-white ml-3 border border-blue-500/30'
+                                : 'bg-gray-800/90 text-gray-100 border border-gray-700/50 mr-3'
+                        }`}
+                    >
+                        <div className={`leading-relaxed ${
+                            message.sender === 'user' ? 'text-sm' : 'text-sm'
+                        }`}>
+                            <ChatResponseView sender={message.sender} text={message.text} />
+                        </div>
+                        <div
+                            className={`text-xs mt-2 ${
+                                message.sender === 'user'
+                                    ? 'text-blue-100'
+                                    : 'text-gray-400'
+                            }`}
+                        >
+                            {message.timestamp.toLocaleTimeString([], {
+                                hour: '2-digit',
+                                minute: '2-digit'
+                            })}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        ))
+    ), [messages]);
 
     return (
         <div className="flex flex-col h-[90vh] bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 relative overflow-hidden">
@@ -181,60 +340,7 @@ const ChatApp: React.FC = () => {
                         </p>
                     </div>
                 ) : (
-                    messages.map((message: Message) => (
-                        <div
-                            key={message.id}
-                            className={`flex ${message.sender === 'user' ? 'justify-end' : 'justify-start'}`}
-                        >
-                            <div
-                                className={`flex max-w-3xl ${
-                                    message.sender === 'user' ? 'flex-row-reverse' : 'flex-row'
-                                } space-x-3`}
-                            >
-                                <div className="flex-shrink-0">
-                                    <div
-                                        className={`p-2 rounded-full shadow-lg ${
-                                            message.sender === 'user'
-                                                ? 'bg-gradient-to-r from-blue-500 to-cyan-500'
-                                                : 'bg-gradient-to-r from-gray-600 to-gray-700'
-                                        }`}
-                                    >
-                                        {message.sender === 'user' ? (
-                                            <User className="w-5 h-5 text-white" />
-                                        ) : (
-                                            <Bot className="w-5 h-5 text-white" />
-                                        )}
-                                    </div>
-                                </div>
-                                <div
-                                    className={`px-4 py-3 rounded-2xl shadow-2xl backdrop-blur-sm max-w-full ${
-                                        message.sender === 'user'
-                                            ? 'bg-gradient-to-r from-blue-600 to-cyan-600 text-white ml-3 border border-blue-500/30'
-                                            : 'bg-gray-800/90 text-gray-100 border border-gray-700/50 mr-3'
-                                    }`}
-                                >
-                                    <div className={`leading-relaxed ${
-                                        message.sender === 'user' ? 'text-sm' : 'text-sm'
-                                    }`}>
-                                   <ChatResponseView sender={message.sender} text={message.text}/>
-                                        {/*{formatMessage(message.text)}*/}
-                                    </div>
-                                    <div
-                                        className={`text-xs mt-2 ${
-                                            message.sender === 'user'
-                                                ? 'text-blue-100'
-                                                : 'text-gray-400'
-                                        }`}
-                                    >
-                                        {message.timestamp.toLocaleTimeString([], {
-                                            hour: '2-digit',
-                                            minute: '2-digit'
-                                        })}
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    ))
+                    messageComponents
                 )}
 
                 {/* Loading indicator */}
@@ -266,7 +372,7 @@ const ChatApp: React.FC = () => {
                         <textarea
                             ref={inputRef}
                             value={inputMessage}
-                            onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setInputMessage(e.target.value)}
+                            onChange={handleInputChange}
                             onKeyDown={handleKeyPress}
                             placeholder="Type your message here..."
                             rows={1}
