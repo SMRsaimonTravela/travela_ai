@@ -158,7 +158,7 @@ const SupportChatWidget: React.FC = () => {
     const inputRef = useRef<HTMLTextAreaElement>(null);
 
     // N8N webhook URL
-    const N8N_WEBHOOK_URL: string = 'https://n8n.travela.world/webhook-test/custom_wa_bot';
+    const N8N_WEBHOOK_URL: string = 'https://n8n.travela.world/webhook/custom_wa_bot';
 
     // Check if mobile
     const isMobile = window.innerWidth < 768;
