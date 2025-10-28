@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { Send, Bot, User, Loader2, X, Copy, Check } from 'lucide-react';
+import { Send, Bot, User, Loader2, X, Copy, Check, MessageCircle, Minimize2 } from 'lucide-react';
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
@@ -11,13 +11,44 @@ interface Message {
     text: string;
     sender: 'user' | 'bot';
     timestamp: Date;
+    requestId?: string;
 }
 
 interface ApiResponse {
     output?: string;
 }
 
-// Memoized ChatResponseView component to prevent unnecessary re-renders
+// Generate unique ID for each request
+const generateUniqueId = (): string => {
+    return `chat_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+};
+
+// Local storage utilities
+const STORAGE_KEYS = {
+    CHAT_MESSAGES: 'travela_chat_messages',
+    USER_SESSION: 'travela_user_session',
+    CHAT_STATE: 'travela_chat_state'
+};
+
+const saveToLocalStorage = (key: string, data: any): void => {
+    try {
+        localStorage.setItem(key, JSON.stringify(data));
+    } catch (error) {
+        console.error('Failed to save to localStorage:', error);
+    }
+};
+
+const getFromLocalStorage = (key: string): any => {
+    try {
+        const item = localStorage.getItem(key);
+        return item ? JSON.parse(item) : null;
+    } catch (error) {
+        console.error('Failed to get from localStorage:', error);
+        return null;
+    }
+};
+
+// Memoized ChatResponseView component
 const ChatResponseView: React.FC<{
     text: string;
     sender: "bot" | 'user';
@@ -29,20 +60,15 @@ const ChatResponseView: React.FC<{
         try {
             await navigator.clipboard.writeText(text);
             setCopied(true);
-
-            // Clear existing timeout
             if (timeoutRef.current) {
                 clearTimeout(timeoutRef.current);
             }
-
-            // Set new timeout
             timeoutRef.current = setTimeout(() => setCopied(false), 2000);
         } catch (err) {
             console.error("Failed to copy text: ", err);
         }
     }, [text]);
 
-    // Cleanup timeout on unmount
     useEffect(() => {
         return () => {
             if (timeoutRef.current) {
@@ -51,7 +77,6 @@ const ChatResponseView: React.FC<{
         };
     }, []);
 
-    // Memoize the formatted text to prevent recalculation
     const formattedText = useMemo(() => {
         return text.replace(
             /(https?:\/\/[^\s]+(\.png|\.jpg|\.jpeg|\.gif))/gi,
@@ -59,7 +84,6 @@ const ChatResponseView: React.FC<{
         );
     }, [text]);
 
-    // Memoize markdown components to prevent recreation
     const markdownComponents = useMemo(() => ({
         img({ src, alt }: { src?: string; alt?: string }) {
             return (
@@ -93,22 +117,19 @@ const ChatResponseView: React.FC<{
 
     return (
         <div className="relative">
-            {/* Copy Button - Only for bot messages */}
             {sender === "bot" && (
                 <button
                     onClick={handleCopy}
-                    className="absolute bottom-[-39px] right-0 p-1 rounded-md hover:bg-gray-200 dark:hover:bg-gray-700 transition bg-transparent"
+                    className="absolute -bottom-6 right-0 p-1 rounded-md hover:bg-gray-200 dark:hover:bg-gray-700 transition bg-transparent opacity-0 group-hover:opacity-100"
                     title="Copy message"
                 >
                     {copied ? (
-                        <Check size={16} className="text-green-500" />
+                        <Check size={12} className="text-green-500" />
                     ) : (
-                        <Copy size={16} className="text-gray-500" />
+                        <Copy size={12} className="text-gray-500" />
                     )}
                 </button>
             )}
-
-            {/* Render Message */}
             <ReactMarkdown
                 remarkPlugins={[remarkGfm]}
                 rehypePlugins={[rehypeRaw]}
@@ -122,66 +143,108 @@ const ChatResponseView: React.FC<{
 
 ChatResponseView.displayName = 'ChatResponseView';
 
-// Main ChatApp Component
-const ChatApp: React.FC = () => {
+// Support Chat Widget Component
+const SupportChatWidget: React.FC = () => {
+    const [isOpen, setIsOpen] = useState<boolean>(false);
     const [messages, setMessages] = useState<Message[]>([]);
     const [inputMessage, setInputMessage] = useState<string>('');
     const [isLoading, setIsLoading] = useState<boolean>(false);
-    const [imageModalOpen, setImageModalOpen] = useState<boolean>(false);
-    const [modalImageSrc, setModalImageSrc] = useState<string>('');
+    const [isMinimized, setIsMinimized] = useState<boolean>(false);
+    const [userSessionId] = useState<string>(() => {
+        const existing = getFromLocalStorage(STORAGE_KEYS.USER_SESSION);
+        return existing || generateUniqueId();
+    });
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLTextAreaElement>(null);
 
     // N8N webhook URL
     const N8N_WEBHOOK_URL: string = 'https://n8n.moveon.run/webhook/chat';
 
-    // Load messages from local storage on component mount
-    useEffect(() => {
-        try {
-            const storedMessages = localStorage.getItem('chatHistory');
-            if (storedMessages) {
-                const parsedMessages: Message[] = JSON.parse(storedMessages).map((msg: any) => ({
-                    ...msg,
-                    timestamp: new Date(msg.timestamp)
-                }));
-                setMessages(parsedMessages);
-            }
-        } catch (error) {
-            console.error("Failed to load chat history from local storage:", error);
-            localStorage.removeItem('chatHistory');
-        }
-    }, []);
+    // Check if mobile
+    const isMobile = window.innerWidth < 768;
 
-    // Save messages to local storage whenever messages state changes
+    // Load chat state from localStorage on mount
+    useEffect(() => {
+        const savedMessages = getFromLocalStorage(STORAGE_KEYS.CHAT_MESSAGES);
+        const savedState = getFromLocalStorage(STORAGE_KEYS.CHAT_STATE);
+
+        if (savedMessages && Array.isArray(savedMessages) && savedMessages.length > 0) {
+            setMessages(savedMessages.map(msg => ({
+                ...msg,
+                timestamp: new Date(msg.timestamp)
+            })));
+        } else {
+            // Initial welcome message
+            const welcomeMessage: Message = {
+                id: Date.now(),
+                text: "Hello! I'm your Travela support assistant. How can I help you today?",
+                sender: 'bot',
+                timestamp: new Date()
+            };
+            setMessages([welcomeMessage]);
+        }
+
+        if (savedState) {
+            setIsOpen(savedState.isOpen || false);
+            setIsMinimized(savedState.isMinimized || false);
+        }
+
+        // Save session ID
+        saveToLocalStorage(STORAGE_KEYS.USER_SESSION, userSessionId);
+    }, [userSessionId]);
+
+    // Save messages to localStorage whenever they change
     useEffect(() => {
         if (messages.length > 0) {
-            try {
-                const messagesToSave = messages.slice(Math.max(messages.length - 100, 0));
-                localStorage.setItem('chatHistory', JSON.stringify(messagesToSave));
-            } catch (error) {
-                console.error("Failed to save chat history to local storage:", error);
-            }
+            saveToLocalStorage(STORAGE_KEYS.CHAT_MESSAGES, messages);
         }
+    }, [messages]);
+
+    // Save chat state to localStorage
+    useEffect(() => {
+        saveToLocalStorage(STORAGE_KEYS.CHAT_STATE, {
+            isOpen,
+            isMinimized
+        });
+    }, [isOpen, isMinimized]);
+
+    useEffect(() => {
         scrollToBottom();
     }, [messages]);
+
+    useEffect(() => {
+        if (isOpen && inputRef.current) {
+            inputRef.current.focus();
+        }
+    }, [isOpen]);
 
     const scrollToBottom = useCallback((): void => {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     }, []);
 
-    const closeImageModal = useCallback((): void => {
-        setImageModalOpen(false);
-        setModalImageSrc('');
+    const toggleChat = useCallback(() => {
+        setIsOpen(prev => !prev);
+        setIsMinimized(false);
+    }, []);
+
+    const minimizeChat = useCallback(() => {
+        setIsMinimized(true);
+    }, []);
+
+    const maximizeChat = useCallback(() => {
+        setIsMinimized(false);
     }, []);
 
     const sendMessage = useCallback(async (): Promise<void> => {
         if (!inputMessage.trim() || isLoading) return;
 
+        const requestId = generateUniqueId();
         const userMessage: Message = {
             id: Date.now(),
             text: inputMessage,
             sender: 'user',
-            timestamp: new Date()
+            timestamp: new Date(),
+            requestId
         };
 
         setMessages(prev => [...prev, userMessage]);
@@ -196,6 +259,11 @@ const ChatApp: React.FC = () => {
                 },
                 body: JSON.stringify({
                     prompt: inputMessage,
+                    requestId,
+                    sessionId: userSessionId,
+                    timestamp: new Date().toISOString(),
+                    userAgent: navigator.userAgent,
+                    url: window.location.href
                 }),
             });
 
@@ -209,7 +277,8 @@ const ChatApp: React.FC = () => {
                 id: Date.now() + 1,
                 text: data.output || 'Sorry, I could not process your request.',
                 sender: 'bot',
-                timestamp: new Date()
+                timestamp: new Date(),
+                requestId
             };
 
             setMessages(prev => [...prev, botMessage]);
@@ -219,13 +288,14 @@ const ChatApp: React.FC = () => {
                 id: Date.now() + 1,
                 text: 'Sorry, I encountered an error while processing your request. Please try again.',
                 sender: 'bot',
-                timestamp: new Date()
+                timestamp: new Date(),
+                requestId
             };
             setMessages(prev => [...prev, errorMessage]);
         } finally {
             setIsLoading(false);
         }
-    }, [inputMessage, isLoading, N8N_WEBHOOK_URL]);
+    }, [inputMessage, isLoading, N8N_WEBHOOK_URL, userSessionId]);
 
     const handleKeyPress = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>): void => {
         if (e.key === 'Enter' && !e.shiftKey) {
@@ -234,33 +304,26 @@ const ChatApp: React.FC = () => {
         }
     }, [sendMessage]);
 
-    const handleTextareaInput = useCallback((e: React.FormEvent<HTMLTextAreaElement>): void => {
-        const target = e.target as HTMLTextAreaElement;
-        target.style.height = 'auto';
-        target.style.height = Math.min(target.scrollHeight, 120) + 'px';
-    }, []);
-
     const handleInputChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
         setInputMessage(e.target.value);
     }, []);
 
-    // Memoized message components to prevent unnecessary re-renders
     const messageComponents = useMemo(() => (
         messages.map((message: Message) => (
             <div
                 key={message.id}
-                className={`flex ${message.sender === 'user' ? 'justify-end' : 'justify-start'}`}
+                className={`flex ${message.sender === 'user' ? 'justify-end' : 'justify-start'} group mb-4`}
             >
                 <div
-                    className={`flex max-w-3xl ${
+                    className={`flex max-w-[85%] ${
                         message.sender === 'user' ? 'flex-row-reverse' : 'flex-row'
-                    } space-x-3`}
+                    } items-start space-x-3`}
                 >
                     <div className="flex-shrink-0">
                         <div
-                            className={`p-2 rounded-full shadow-lg ${
+                            className={`w-10 h-10 rounded-full flex items-center justify-center shadow-md ${
                                 message.sender === 'user'
-                                    ? 'bg-gradient-to-r from-blue-500 to-cyan-500'
+                                    ? 'bg-gradient-to-r from-pink-500 to-pink-600'
                                     : 'bg-gradient-to-r from-gray-600 to-gray-700'
                             }`}
                         >
@@ -272,22 +335,20 @@ const ChatApp: React.FC = () => {
                         </div>
                     </div>
                     <div
-                        className={`px-4 py-3 rounded-2xl shadow-2xl backdrop-blur-sm max-w-full ${
+                        className={`px-4 py-3 rounded-2xl shadow-sm ${
                             message.sender === 'user'
-                                ? 'bg-gradient-to-r from-blue-600 to-cyan-600 text-white ml-3 border border-blue-500/30'
-                                : 'bg-gray-800/90 text-gray-100 border border-gray-700/50 mr-3'
+                                ? 'bg-gradient-to-r from-pink-500 to-pink-600 text-white mr-3'
+                                : 'bg-white text-gray-800 ml-3 border border-gray-100'
                         }`}
                     >
-                        <div className={`leading-relaxed ${
-                            message.sender === 'user' ? 'text-sm' : 'text-sm'
-                        }`}>
+                        <div className="text-sm leading-relaxed">
                             <ChatResponseView sender={message.sender} text={message.text} />
                         </div>
                         <div
                             className={`text-xs mt-2 ${
                                 message.sender === 'user'
-                                    ? 'text-blue-100'
-                                    : 'text-gray-400'
+                                    ? 'text-pink-100'
+                                    : 'text-gray-500'
                             }`}
                         >
                             {message.timestamp.toLocaleTimeString([], {
@@ -302,126 +363,159 @@ const ChatApp: React.FC = () => {
     ), [messages]);
 
     return (
-        <div className="flex flex-col h-[90vh] bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 relative overflow-hidden">
-            {/* Animated background elements */}
-            <div className="absolute inset-0 overflow-hidden pointer-events-none">
-                <div className="absolute -top-40 -right-40 w-80 h-80 bg-blue-500/10 rounded-full blur-3xl animate-pulse"></div>
-                <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-purple-500/10 rounded-full blur-3xl animate-pulse delay-1000"></div>
-                <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-cyan-500/5 rounded-full blur-3xl animate-pulse delay-2000"></div>
-            </div>
-
-            {/* Reflex overlay */}
-            <div className="absolute inset-0 bg-gradient-to-t from-transparent via-white/[0.02] to-transparent pointer-events-none"></div>
-
-            {/* Header */}
-            <div className="relative z-10 bg-gray-800/80 backdrop-blur-xl border-b border-gray-700/50 px-6 py-3 shadow-2xl">
-                <div className="flex items-center space-x-3">
-                    <div className="p-2 bg-gradient-to-r from-blue-500 to-cyan-500 rounded-full shadow-lg">
-                        <Bot className="w-6 h-6 text-white" />
-                    </div>
-                    <div>
-                        <h3 className="text-md md:text-lg font-medium md:font-semibold text-green-400">MoveAI Assistant</h3>
-                    </div>
-                </div>
-            </div>
-
-            {/* Messages Container */}
-            <div className="relative z-10 flex-1 overflow-y-auto px-6 py-4 space-y-6">
-                {messages.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center h-full text-center">
-                        <div className="p-4 bg-gradient-to-r from-blue-500 to-cyan-500 rounded-full mb-4 shadow-2xl animate-pulse">
-                            <Bot className="w-12 h-12 text-white" />
-                        </div>
-                        <h2 className="text-2xl font-semibold text-white mb-2">
-                            Welcome to AI Assistant
-                        </h2>
-                        <p className="text-gray-400 max-w-md">
-                            Start a conversation by typing your message below. I'm here to help you with any questions you might have.
-                        </p>
-                    </div>
-                ) : (
-                    messageComponents
-                )}
-
-                {/* Loading indicator */}
-                {isLoading && (
-                    <div className="flex justify-start">
-                        <div className="flex space-x-3">
-                            <div className="flex-shrink-0">
-                                <div className="p-2 rounded-full bg-gradient-to-r from-gray-600 to-gray-700 shadow-lg">
-                                    <Bot className="w-5 h-5 text-white" />
-                                </div>
-                            </div>
-                            <div className="px-4 py-3 rounded-2xl bg-gray-800/90 border border-gray-700/50 shadow-2xl backdrop-blur-sm">
-                                <div className="flex items-center space-x-2">
-                                    <Loader2 className="w-4 h-4 animate-spin text-cyan-400" />
-                                    <span className="text-sm text-gray-300">Thinking...</span>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                )}
-
-                <div ref={messagesEndRef} />
-            </div>
-
-            {/* Input Section */}
-            <div className="relative z-10 bg-gray-800/80 backdrop-blur-xl border-t border-gray-700/50 px-6 py-4 shadow-2xl">
-                <div className="flex space-x-3">
-                    <div className="flex-1 relative">
-                        <textarea
-                            ref={inputRef}
-                            value={inputMessage}
-                            onChange={handleInputChange}
-                            onKeyDown={handleKeyPress}
-                            placeholder="Type your message here..."
-                            rows={1}
-                            className="w-full px-4 py-3 bg-gray-700/50 border border-gray-600/50 rounded-2xl resize-none focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500/50 text-white placeholder-gray-400 backdrop-blur-sm transition-all duration-200 hover:bg-gray-700/70"
-                            style={{
-                                minHeight: '48px',
-                                maxHeight: '120px'
-                            }}
-                            onInput={handleTextareaInput}
-                        />
-                    </div>
+        <>
+            {/* Chat Button */}
+            {!isOpen && (
+                <div className="fixed bottom-6 right-6 z-50">
                     <button
-                        onClick={sendMessage}
-                        disabled={!inputMessage.trim() || isLoading}
-                        className="px-4 py-3 bg-gradient-to-r from-blue-500 to-cyan-500 text-white rounded-2xl hover:from-blue-600 hover:to-cyan-600 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 disabled:from-gray-600 disabled:to-gray-700 disabled:cursor-not-allowed transition-all duration-200 flex items-center justify-center min-w-[48px] shadow-lg hover:shadow-xl transform hover:scale-105 disabled:hover:scale-100"
+                        onClick={toggleChat}
+                        className="group relative bg-gradient-to-br from-pink-400 via-pink-500 to-pink-600 hover:from-pink-500 hover:via-pink-600 hover:to-pink-700 text-white rounded-full p-4 shadow-2xl hover:shadow-pink-500/40 transition-all duration-700 ease-in-out transform hover:scale-105 hover:rotate-1 flex items-center space-x-2 overflow-hidden"
                     >
-                        {isLoading ? (
-                            <Loader2 className="w-5 h-5 animate-spin" />
-                        ) : (
-                            <Send className="w-5 h-5" />
-                        )}
+                        {/* Animated background shimmer */}
+                        <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-1500 ease-in-out"></div>
+
+                        {/* Pulsing ring */}
+                        <div className="absolute inset-0 rounded-full bg-gradient-to-br from-pink-300 to-pink-500 opacity-60 animate-ping"></div>
+
+                        <div className="relative z-10 flex items-center space-x-2">
+                            <MessageCircle className="w-6 h-6 drop-shadow-lg text-white/90" />
+                            <span className="hidden group-hover:block text-sm whitespace-nowrap pr-2 font-semibold tracking-wide transition-all duration-500 ease-in-out transform group-hover:translate-x-1 text-white/95">
+                                💬 Let's Chat!
+                            </span>
+                        </div>
+
+                        {/* Enhanced notification dot */}
+                        <div className="absolute -top-1 -right-1 w-5 h-5 bg-gradient-to-br from-red-400 to-red-600 rounded-full flex items-center justify-center shadow-lg">
+                            <div className="w-2 h-2 bg-white rounded-full animate-bounce"></div>
+                        </div>
                     </button>
                 </div>
-                <div className="mt-2 text-xs text-gray-500 text-center">
-                    Press Enter to send, Shift+Enter for new line
-                </div>
-            </div>
+            )}
 
-            {/* Image Modal */}
-            {imageModalOpen && (
-                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-                    <div className="relative max-w-4xl max-h-full">
-                        <button
-                            onClick={closeImageModal}
-                            className="absolute -top-4 -right-4 bg-gray-800 hover:bg-gray-700 text-white p-2 rounded-full shadow-lg transition-colors duration-200 z-10"
-                        >
-                            <X className="w-5 h-5" />
-                        </button>
-                        <img
-                            src={modalImageSrc}
-                            alt="Full size view"
-                            className="max-w-full max-h-full object-contain rounded-lg shadow-2xl"
-                            onClick={closeImageModal}
-                        />
+            {/* Chat Widget */}
+            {isOpen && (
+                <div
+                    className={`fixed z-50 bg-white/95 backdrop-blur-xl rounded-3xl shadow-2xl border border-gray-200/50 ${
+                        isMobile
+                            ? 'inset-4 top-8'
+                            : isMinimized
+                                ? 'bottom-6 right-6 w-80 h-16'
+                                : 'bottom-6 right-6 w-96 h-[36rem]'
+                    } transition-all duration-500 ease-out flex flex-col overflow-hidden transform hover:shadow-3xl`}
+                >
+                    {/* Header */}
+                    <div className="bg-gradient-to-br from-pink-400 via-pink-500 to-pink-600 text-white px-6 py-4 flex items-center justify-between relative overflow-hidden">
+                        {/* Animated background */}
+                        <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent animate-pulse"></div>
+
+                        <div className="flex items-center space-x-3 relative z-10">
+                            <div className="w-10 h-10 bg-white/25 backdrop-blur-sm rounded-full flex items-center justify-center shadow-lg border border-white/40">
+                                <Bot className="w-5 h-5 text-white drop-shadow-sm" />
+                            </div>
+                            <div>
+                                <h3 className="font-bold text-base tracking-wide">Travela Support</h3>
+                                <p className="text-xs text-white/90 flex items-center">
+                                    <div className="w-2 h-2 bg-green-400 rounded-full mr-2 animate-pulse shadow-sm"></div>
+                                    Online • Ready to help
+                                </p>
+                            </div>
+                        </div>
+                        <div className="flex items-center space-x-2 relative z-10">
+                            {!isMobile && (
+                                <button
+                                    onClick={isMinimized ? maximizeChat : minimizeChat}
+                                    className="text-black  hover:bg-white/25 p-2 rounded-xl transition-all duration-500 ease-in-out transform  border border-white/20 hover:border-white/40"
+                                    title={isMinimized ? "Maximize" : "Minimize"}
+                                >
+                                    <Minimize2 className="w-4 h-4 drop-shadow-sm" />
+                                </button>
+                            )}
+                            <button
+                                onClick={toggleChat}
+                                className="text-black  hover:bg-white/25 p-2 rounded-xl transition-all duration-500 ease-in-out transform  backdrop-blur-sm border border-white/20 hover:border-white/40"
+                                title="Close chat"
+                            >
+                                <X className="w-4 h-4 drop-shadow-sm" />
+                            </button>
+                        </div>
                     </div>
+
+                    {/* Chat Content - Hidden when minimized */}
+                    {!isMinimized && (
+                        <>
+                            {/* Messages */}
+                            <div className="flex-1 overflow-y-auto p-6 space-y-2 bg-gradient-to-b from-gray-50/80 to-white/80 backdrop-blur-sm">
+                                {messageComponents}
+
+                                {isLoading && (
+                                    <div className="flex justify-start mb-4">
+                                        <div className="flex items-start space-x-3">
+                                            <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center shadow-lg border border-blue-200">
+                                                <Bot className="w-5 h-5 text-white drop-shadow-sm" />
+                                            </div>
+                                            <div className="bg-white/90 backdrop-blur-sm px-4 py-3 rounded-2xl ml-3 border border-gray-200/50 shadow-lg">
+                                                <div className="flex items-center space-x-2">
+                                                    <Loader2 className="w-4 h-4 animate-spin text-purple-500" />
+                                                    <span className="text-sm text-gray-600 font-medium">Thinking...</span>
+                                                    <div className="flex space-x-1">
+                                                        <div className="w-1.5 h-1.5 bg-purple-400 rounded-full animate-bounce"></div>
+                                                        <div className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce" style={{animationDelay: '0.15s'}}></div>
+                                                        <div className="w-1.5 h-1.5 bg-pink-400 rounded-full animate-bounce" style={{animationDelay: '0.3s'}}></div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+                                <div ref={messagesEndRef} />
+                            </div>
+
+                            {/* Input */}
+                            <div className="border-t border-gray-200/50 p-6 bg-white/90 backdrop-blur-sm">
+                                <div className="flex space-x-3">
+                                    <textarea
+                                        ref={inputRef}
+                                        value={inputMessage}
+                                        onChange={handleInputChange}
+                                        onKeyDown={handleKeyPress}
+                                        placeholder="Type your message..."
+                                        rows={1}
+                                        className="flex-1 px-4 py-3 border-2 border-gray-200/60 rounded-2xl resize-none focus:outline-none focus:ring-2 focus:ring-pink-500/50 focus:border-pink-400 text-sm transition-all duration-500 ease-in-out hover:border-pink-300 hover:shadow-lg bg-white/80 backdrop-blur-sm placeholder-gray-400"
+                                        style={{ maxHeight: '80px' }}
+                                        onInput={(e) => {
+                                            const target = e.target as HTMLTextAreaElement;
+                                            target.style.height = 'auto';
+                                            target.style.height = Math.min(target.scrollHeight, 80) + 'px';
+                                        }}
+                                    />
+                                    <button
+                                        onClick={sendMessage}
+                                        disabled={!inputMessage.trim() || isLoading}
+                                        className="group px-4 py-3 bg-gradient-to-br from-pink-400 via-pink-500 to-pink-600 hover:from-pink-500 hover:via-pink-600 hover:to-pink-700 text-white rounded-2xl focus:outline-none focus:ring-2 focus:ring-pink-500/50 disabled:bg-gray-300 disabled:cursor-not-allowed transition-all duration-500 ease-in-out flex-shrink-0 shadow-lg hover:shadow-pink-500/40 transform hover:scale-110 hover:rotate-3 disabled:transform-none disabled:hover:scale-100 disabled:hover:rotate-0 overflow-hidden relative"
+                                    >
+                                        {/* Button shimmer effect */}
+                                        <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/25 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-1000 ease-in-out"></div>
+
+                                        <div className="relative z-10">
+                                            {isLoading ? (
+                                                <Loader2 className="w-5 h-5 animate-spin drop-shadow-sm text-white" />
+                                            ) : (
+                                                <Send className="w-5 h-5 drop-shadow-sm transition-transform duration-300 ease-in-out group-hover:translate-x-1 group-hover:-translate-y-1 text-white" />
+                                            )}
+                                        </div>
+                                    </button>
+                                </div>
+                                <p className="text-xs text-gray-500 mt-3 text-center flex items-center justify-center font-medium">
+                                    <span className="mr-2">💡</span>
+                                    Press Enter to send, Shift+Enter for new line
+                                </p>
+                            </div>
+                        </>
+                    )}
                 </div>
             )}
-        </div>
+        </>
     );
 };
 
-export default ChatApp;
+export default SupportChatWidget

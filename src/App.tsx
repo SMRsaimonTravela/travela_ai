@@ -1,12 +1,17 @@
 import './App.css'
-import ChatApp from "./Chat.tsx";
+import SupportChatWidget from "./Chat.tsx";
 import "./index.css"
 
 function App() {
 
   return (
-     <ChatApp/>
-  )
+      <>
+
+        {/* Support Chat Widget */}
+
+        <SupportChatWidget/>
+      </>
+  );
 }
 
 export default App
