@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { Send, Bot, User, Loader2, X, Copy, Check, MessageCircle, Minimize2 } from 'lucide-react';
+import { Send, Bot, User, Loader2, X, Copy, Check, MessageCircle, Minimize2, Trash2 } from 'lucide-react';
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
@@ -158,7 +158,7 @@ const SupportChatWidget: React.FC = () => {
     const inputRef = useRef<HTMLTextAreaElement>(null);
 
     // N8N webhook URL
-    const N8N_WEBHOOK_URL: string = 'https://n8n.travela.world/webhook/custom_wa_bot';
+    const N8N_WEBHOOK_URL: string = 'https://n8n.travela.world/webhook-test/custom_wa_bot';
 
     // Check if mobile
     const isMobile = window.innerWidth < 768;
@@ -308,6 +308,27 @@ const SupportChatWidget: React.FC = () => {
         setInputMessage(e.target.value);
     }, []);
 
+    const clearChatData = useCallback(() => {
+        // Clear all local storage data
+        localStorage.removeItem(STORAGE_KEYS.CHAT_MESSAGES);
+        localStorage.removeItem(STORAGE_KEYS.CHAT_STATE);
+        localStorage.removeItem(STORAGE_KEYS.USER_SESSION);
+
+        // Reset state to initial values
+        setMessages([{
+            id: Date.now(),
+            text: "Hello! I'm your Travela support assistant. How can I help you today?",
+            sender: 'bot',
+            timestamp: new Date()
+        }]);
+        setInputMessage('');
+        setIsLoading(false);
+
+        // Generate new session ID
+        const newSessionId = generateUniqueId();
+        saveToLocalStorage(STORAGE_KEYS.USER_SESSION, newSessionId);
+    }, []);
+
     const messageComponents = useMemo(() => (
         messages.map((message: Message) => (
             <div
@@ -315,7 +336,7 @@ const SupportChatWidget: React.FC = () => {
                 className={`flex ${message.sender === 'user' ? 'justify-end' : 'justify-start'} group mb-4`}
             >
                 <div
-                    className={`flex max-w-[85%] ${
+                    className={`flex max-w-[90%] ${
                         message.sender === 'user' ? 'flex-row-reverse' : 'flex-row'
                     } items-start space-x-3`}
                 >
@@ -412,13 +433,6 @@ const SupportChatWidget: React.FC = () => {
                             <div className="w-10 h-10 bg-white/25 backdrop-blur-sm rounded-full flex items-center justify-center shadow-lg border border-white/40">
                                 <Bot className="w-5 h-5 text-white drop-shadow-sm" />
                             </div>
-                            <div>
-                                <h3 className="font-bold text-base tracking-wide">Travela Support</h3>
-                                <p className="text-xs text-white/90 flex items-center">
-                                    <div className="w-2 h-2 bg-green-400 rounded-full mr-2 animate-pulse shadow-sm"></div>
-                                    Online • Ready to help
-                                </p>
-                            </div>
                         </div>
                         <div className="flex items-center space-x-2 relative z-10">
                             {!isMobile && (
@@ -431,8 +445,15 @@ const SupportChatWidget: React.FC = () => {
                                 </button>
                             )}
                             <button
+                                onClick={clearChatData}
+                                className="text-black hover:text-red-600 hover:bg-white/25 p-2 rounded-xl transition-all duration-500 ease-in-out transform hover:scale-110 hover:rotate-12 backdrop-blur-sm border border-white/20 hover:border-white/40"
+                                title="Clear chat history"
+                            >
+                                <Trash2 className="w-4 h-4 drop-shadow-sm" />
+                            </button>
+                            <button
                                 onClick={toggleChat}
-                                className="text-black  hover:bg-white/25 p-2 rounded-xl transition-all duration-500 ease-in-out transform  backdrop-blur-sm border border-white/20 hover:border-white/40"
+                                className="text-black  bg-white p-2 rounded-xl transition-all duration-500 ease-in-out transform  backdrop-blur-sm border border-white/20 "
                                 title="Close chat"
                             >
                                 <X className="w-4 h-4 drop-shadow-sm" />
