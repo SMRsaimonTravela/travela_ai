@@ -501,7 +501,7 @@ const SupportChatWidget: React.FC = () => {
                                         onKeyDown={handleKeyPress}
                                         placeholder="Type your message..."
                                         rows={1}
-                                        className="flex-1 px-4 py-3 border-2 border-gray-200/60 rounded-2xl resize-none focus:outline-none focus:ring-2 focus:ring-pink-500/50 focus:border-pink-400 text-sm transition-all duration-500 ease-in-out hover:border-pink-300 hover:shadow-lg bg-white/80 backdrop-blur-sm placeholder-gray-400"
+                                        className="flex-1 px-4 !text-black py-3 border-2 border-gray-200/60 rounded-2xl resize-none focus:outline-none focus:ring-2 focus:ring-pink-500/50 focus:border-pink-400 text-sm transition-all duration-500 ease-in-out hover:border-pink-300 hover:shadow-lg bg-white/80 backdrop-blur-sm placeholder-gray-400"
                                         style={{ maxHeight: '80px' }}
                                         onInput={(e) => {
                                             const target = e.target as HTMLTextAreaElement;
