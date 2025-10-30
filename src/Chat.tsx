@@ -196,7 +196,7 @@ const SupportChatWidget: React.FC = () => {
     // Save messages to localStorage whenever they change
     useEffect(() => {
         if (messages.length > 0) {
-            saveToLocalStorage(STORAGE_KEYS.CHAT_MESSAGES, messages);
+            saveToLocalStorage(STORAGE_KEYS.CHAT_MESSAGES, messages.slice(-30));
         }
     }, [messages]);
 
@@ -247,7 +247,7 @@ const SupportChatWidget: React.FC = () => {
             requestId
         };
 
-        setMessages(prev => [...prev, userMessage]);
+        setMessages(prev => [...prev, userMessage].slice(-30));
         setInputMessage('');
         setIsLoading(true);
 
@@ -281,7 +281,7 @@ const SupportChatWidget: React.FC = () => {
                 requestId
             };
 
-            setMessages(prev => [...prev, botMessage]);
+            setMessages(prev => [...prev, botMessage].slice(-30));
         } catch (error) {
             console.error('Error sending message:', error);
             const errorMessage: Message = {
@@ -291,7 +291,7 @@ const SupportChatWidget: React.FC = () => {
                 timestamp: new Date(),
                 requestId
             };
-            setMessages(prev => [...prev, errorMessage]);
+            setMessages(prev => [...prev, errorMessage].slice(-30));
         } finally {
             setIsLoading(false);
         }
